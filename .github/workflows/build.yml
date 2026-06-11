@@ -1,120 +1,96 @@
-name: build
+name: Android Build Draft Release
 
 on:
   push:
+    branches: [ master ]
     paths:
       - 'src/**'
       - 'CMakeLists.txt'
       - '.github/workflows/**.yml'
   pull_request:
-    paths:
-      - 'src/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/**.yml'
+    branches: [ master ]
+
+permissions:
+  contents: write
 
 jobs:
-  linux:
-    runs-on: ubuntu-20.04
+  android:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        abi: [arm64-v8a]
+
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libsqlite3-dev zlib1g-dev
-
-      - name: Build
-        run: |
-          cmake . -G Ninja
-          ninja -j4
-
-      - name: Upload output as artifact
-        uses: actions/upload-artifact@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          name: MC2MT-linux
-          path: bin/MC2MT
+          fetch-depth: 0
 
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: bin/MC2MT
-          asset_name: MC2MT-linux
-          tag: 'rolling'
-          overwrite: true
+      - name: Set NDK Path
+        # GitHub 的 Ubuntu 环境默认在 $ANDROID_SDK_ROOT/ndk-bundle 或 ndk/<version>
+        # 这里我们手动指向预装的版本（通常是 25.x 或 26.x）
+        run: |
+          ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$(ls $ANDROID_SDK_ROOT/ndk | sort -V | tail -n 1)
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+          echo "NDK path: $ANDROID_NDK_HOME"
+
+      - name: Install Build Tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Build SQLite3 for Android
+        run: |
+          mkdir sqlite-build && cd sqlite-build
+          curl -L https://www.sqlite.org/2024/sqlite-amalgamation-3450300.zip -o sqlite.zip
+          unzip sqlite.zip
+          cd sqlite-amalgamation-3450300
+          
+          TARGET="aarch64-none-linux-android24"
+          
+          # 直接使用 NDK 内部的编译器
+          $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang \
+            --target=$TARGET \
+            --sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot \
+            -c sqlite3.c -o sqlite3.o -O3
+          
+          $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar rcs libsqlite3.a sqlite3.o
+          echo "SQLITE_PATH=$(pwd)" >> $GITHUB_ENV
+
+      - name: Build MC2MT
+        run: |
+          mkdir build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSQLite3_INCLUDE_DIR=${{ env.SQLITE_PATH }} \
+            -DSQLite3_LIBRARY=${{ env.SQLITE_PATH }}/libsqlite3.a
+          ninja
+          
+          mkdir -p ../output
+          # 注意：根据你的 CMakeLists.txt，输出路径在 CMAKE_CURRENT_BINARY_DIR/bin
+          cp bin/MC2MT ../output/MC2MT-android-${{ matrix.abi }}
+
+      - name: Get version info
+        id: version
+        shell: bash
+        run: |
+          echo "BUILD_VERSION=android-build-$(date +%Y%m%d_%H%M%S)-${GITHUB_SHA:0:8}" >> $GITHUB_OUTPUT
+          echo "TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")" >> $GITHUB_OUTPUT
+
+      - name: Create Draft Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-
-
-  windows:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: msys2/setup-msys2@v2
+        uses: softprops/action-gh-release@v2
         with:
-          update: true
-          release: false
-          msystem: UCRT64
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-zlib
-            mingw-w64-ucrt-x86_64-sqlite3
-
-      - name: Build
-        run: |
-          cmake . -G Ninja -DCMAKE_EXE_LINKER_FLAGS="-static" -DZLIB_LIBRARY_RELEASE=/ucrt64/lib/libz.a -DSQLite3_LIBRARY=/ucrt64/lib/libsqlite3.a
-          ninja -j4
-
-      - name: Upload output as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MC2MT-windows.exe
-          path: bin/MC2MT.exe
-
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: bin/MC2MT.exe
-          asset_name: MC2MT-windows.exe
-          tag: 'rolling'
-          overwrite: true
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-
-  macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install deps
-        run: |
-          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
-          export HOMEBREW_NO_INSTALL_CLEANUP=1
-          brew update --auto-update
-          brew install --display-times cmake ninja sqlite zlib
-
-      - name: Build
-        run: |
-          cmake . -G Ninja
-          ninja -j4
-
-      - name: Upload output as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MC2MT-macos
-          path: bin/MC2MT
-
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: bin/MC2MT
-          asset_name: MC2MT-macos
-          tag: 'rolling'
-          overwrite: true
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+          tag_name: ${{ steps.version.outputs.BUILD_VERSION }}
+          name: "Android Build ${{ steps.version.outputs.BUILD_VERSION }}"
+          body: |
+            ### 编译信息 (Android)
+            - **架构**: `${{ matrix.abi }}`
+            - **提交 SHA**: `${{ github.sha }}`
+            - **构建时间**: `${{ steps.version.outputs.TIMESTAMP }}`
+          draft: true
+          files: |
+            output/MC2MT-android-${{ matrix.abi }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
