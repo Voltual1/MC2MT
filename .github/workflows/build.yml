@@ -91,6 +91,6 @@ jobs:
             - **构建时间**: `${{ steps.version.outputs.TIMESTAMP }}`
           draft: true
           files: |
-            output/MC2MT-android-${{ matrix.abi }}
+            output/MC2MT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
