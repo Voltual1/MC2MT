@@ -63,9 +63,7 @@ jobs:
             -DANDROID_PLATFORM=android-24 \
             -DCMAKE_BUILD_TYPE=Release \
             -DSQLite3_INCLUDE_DIR=${{ env.SQLITE_PATH }} \
-            -DSQLite3_LIBRARY=${{ env.SQLITE_PATH }}/libsqlite3.a \
-            -DZLIB_INCLUDE_DIR=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include \
-            -DZLIB_LIBRARY=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-none-linux-android/24/libz.so
+            -DSQLite3_LIBRARY=${{ env.SQLITE_PATH }}/libsqlite3.a
           ninja
           
           mkdir -p ../output
