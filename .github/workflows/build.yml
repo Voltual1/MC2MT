@@ -27,8 +27,6 @@ jobs:
           fetch-depth: 0
 
       - name: Set NDK Path
-        # GitHub 的 Ubuntu 环境默认在 $ANDROID_SDK_ROOT/ndk-bundle 或 ndk/<version>
-        # 这里我们手动指向预装的版本（通常是 25.x 或 26.x）
         run: |
           ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$(ls $ANDROID_SDK_ROOT/ndk | sort -V | tail -n 1)
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
@@ -58,17 +56,20 @@ jobs:
       - name: Build MC2MT
         run: |
           mkdir build && cd build
+          # 提示：Android NDK 自带 zlib，传入 ZLIB 的头文件和库路径防止 CMake 找不到
           cmake .. -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=${{ matrix.abi }} \
             -DANDROID_PLATFORM=android-24 \
             -DCMAKE_BUILD_TYPE=Release \
             -DSQLite3_INCLUDE_DIR=${{ env.SQLITE_PATH }} \
-            -DSQLite3_LIBRARY=${{ env.SQLITE_PATH }}/libsqlite3.a
+            -DSQLite3_LIBRARY=${{ env.SQLITE_PATH }}/libsqlite3.a \
+            -DZLIB_INCLUDE_DIR=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include \
+            -DZLIB_LIBRARY=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-none-linux-android/24/libz.so
           ninja
           
           mkdir -p ../output
-          # 注意：根据你的 CMakeLists.txt，输出路径在 CMAKE_CURRENT_BINARY_DIR/bin
+          # 复制并保持带有架构后缀的名称
           cp bin/MC2MT ../output/MC2MT-android-${{ matrix.abi }}
 
       - name: Get version info
@@ -90,7 +91,8 @@ jobs:
             - **提交 SHA**: `${{ github.sha }}`
             - **构建时间**: `${{ steps.version.outputs.TIMESTAMP }}`
           draft: true
+          # 修复点：这里支持使用通配符，或者精准指定和你拷贝的文件名一致
           files: |
-            output/MC2MT
+            output/MC2MT-android-${{ matrix.abi }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
